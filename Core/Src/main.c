@@ -40,7 +40,7 @@
 #define RAD_TO_DEG 57.29578
 #define DEG_TO_RAD 0.017453
 #define ALPHA 0.96                          // Complementary Filter alpha value
-#define dt 0.00069                            // check while loop time
+#define dt 0.00069                       	// check while loop time
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
