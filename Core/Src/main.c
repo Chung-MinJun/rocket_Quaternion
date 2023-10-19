@@ -71,9 +71,21 @@ float gyroAngleX = 0.0f, gyroAngleY = 0.0f; 	// pitch(X) and roll(Y) angle (Eule
 float accelAngleX = 0.0f, accelAngleY = 0.0f; 	// pitch(X) and roll(Y) angle (Euler Angle) by AccelerateScope
 float compAngleX = 0.0f, compAngleY = 0.0f; 	// Complementary Filter result angle        URL https://blog.naver.com/intheglass14/222777512235 https://yjhtpi.tistory.com/352
 float Rocket_vector[3] = { 0.0f };              // rocket vector(attitude) init
+
+float vectorG[3] = {0.0f, 0.0f, -9.81f};
 float Z_unitvector[3] = { 0.0f, 0.0f, 1.0f };   // Z-axis vector
-float Rocket_Angle = 0.0f;    					// result of dot product Rocket Vector with Z-axis
+float magnitudeRocket = 0.0f;
+float magnitudeG = 0.0f;
+float cosTheta = 0.0f;
+float dotProduct = 0.0f;
+float Rocket_Angle_Z = 0.0f;    					// result of dot product Rocket Vector with Z-axis
 float a, b, c = 0.0f;                         	// just acos variables
+typedef struct
+{
+	float x;
+	float y;
+	float z;
+}vector;
 
 uint32_t startTick, endTick, elapsedTicks, costTime_us; //just check while loop time
 //-------------------------------- quaternion
@@ -199,6 +211,9 @@ int main(void)
 	/* Open file to write/ create a file if it doesn't exist */
 	fresult = f_open(&fil, "file1.txt", FA_OPEN_ALWAYS | FA_READ | FA_WRITE);
 	/* Writing text */
+
+	float realAcc_x,realAcc_y,realAcc_z;
+	float desiredAngle = 30.0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -239,7 +254,7 @@ int main(void)
 		// accerlation variance minimum setting	가속도가 충분히 큰 경우에만 사용한
 		if (norm > 0.1f) {
 		    // 가속도를 단위 벡터로 정규화한다
-		    norm = 1.0f / norm;
+			norm = 1.0f / norm;
 		    myAccelScaled.x *= norm;
 		    myAccelScaled.y *= norm;
 		    myAccelScaled.z *= norm;
@@ -306,8 +321,16 @@ int main(void)
 		Rocket_vector[0] = 2.0f*(q1*q3 - q0*q2); // x축
 		Rocket_vector[1] = 2.0f*(q0*q1 + q2*q3); // y축
 		Rocket_vector[2] = q0*q0 - q1*q1 - q2*q2 + q3*q3; // z축
+//		printf("%f, %f, %f\r\n",Rocket_vector[0],Rocket_vector[1],Rocket_vector[2]);
+		// elimination gravity by minJun (Fail)
+		dotProduct = Rocket_vector[0]*vectorG[0]+Rocket_vector[1]*vectorG[1]+Rocket_vector[2]*vectorG[2];
+		magnitudeRocket = sqrt(Rocket_vector[0]*Rocket_vector[0] + Rocket_vector[1]*Rocket_vector[1] + Rocket_vector[2]*Rocket_vector[2]);
+		magnitudeG = sqrt(vectorG[0]*vectorG[0] + vectorG[1]*vectorG[1] + vectorG[2]*vectorG[2]);
+		cosTheta = dotProduct / (magnitudeRocket * magnitudeG);
+		realAcc_x = myAccelScaled.x - 9.81*Rocket_vector[0]*cosTheta;
+		realAcc_y = myAccelScaled.y - 9.81*Rocket_vector[1]*cosTheta;
+		realAcc_z = myAccelScaled.z - 9.81*Rocket_vector[2]*cosTheta;
 
-		// innerproduct Z axis with rocket vector 로켓의 방향벡터와 Z축 단위벡터와의 내적을 계산한다
 		a = Rocket_vector[0] * Z_unitvector[0]
 						+ Rocket_vector[1] * Z_unitvector[1]
 						+ Rocket_vector[2] * Z_unitvector[2];
@@ -317,10 +340,10 @@ int main(void)
 		c = sqrt(Z_unitvector[0] * Z_unitvector[0]
 								+ Z_unitvector[1] * Z_unitvector[1]
 								+ Z_unitvector[2] * Z_unitvector[2]);
-
 		// calc Rocket attitude (RAD) 로켓의 기울기 정도를 계산한다 (라디안)
-		Rocket_Angle = acos(a / (b * c));
-		printf("RocketAngle : %.2f\r\n", Rocket_Angle*RAD_TO_DEG); 						// test code not pass
+		Rocket_Angle_Z = (float)acos(a / (b * c));
+
+//		printf("RocketAngle : %.2f, Acc: %.2f %.2f %.2f \r\n",Rocket_Angle_Z*RAD_TO_DEG,realAcc_x,realAcc_y,realAcc_z);					// test code not pass
 //		float accZ_rot = -accZ_raw * sin(compAngleY) + accY_raw * cos(compAngleY);
 //		printf("pure Z acc : %.2f\r\n", accZ_rot); 						// test code not pass
 
@@ -333,11 +356,11 @@ int main(void)
 		// deploy parachute part
 		if (Parachute == 0)                           					// == 1 ( 0 is just test )
 		{
-			/*if (altitude >= 380) {
+			if (altitude >= 380) {
 				Parachute = 0;
 				printf("deploy parachute: altitude\r\n");
 			}
-			if (Rocket_Angle >= desiredAngle) {
+			else if (Rocket_Angle_Z*RAD_TO_DEG > desiredAngle ) {
 				Parachute = 0;
 				printf("deploy parachute: Desired Angle\r\n");
 			}
@@ -346,11 +369,11 @@ int main(void)
 			//   Parachute = 0;
 			//   printf("deploy parachute : Z velocity");
 			// }
-			if (elapsed_time_ms >= 5000) // 10 s
-					{
+			else if (second >= 4) // 10 s
+			{
 				Parachute = 0;
 				printf("deploy parachute : time out\r\n");
-			}*/
+			}
 		}
 
 		// sdcard part
