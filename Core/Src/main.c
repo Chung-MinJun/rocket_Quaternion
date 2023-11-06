@@ -40,7 +40,7 @@
 #define RAD_TO_DEG 57.29578
 #define DEG_TO_RAD 0.017453
 #define ALPHA 0.96                          // Complementary Filter alpha value
-#define dt 0.00069                            // check while loop time
+#define dt 0.00069                       	// check while loop time
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -71,9 +71,21 @@ float gyroAngleX = 0.0f, gyroAngleY = 0.0f; 	// pitch(X) and roll(Y) angle (Eule
 float accelAngleX = 0.0f, accelAngleY = 0.0f; 	// pitch(X) and roll(Y) angle (Euler Angle) by AccelerateScope
 float compAngleX = 0.0f, compAngleY = 0.0f; 	// Complementary Filter result angle        URL https://blog.naver.com/intheglass14/222777512235 https://yjhtpi.tistory.com/352
 float Rocket_vector[3] = { 0.0f };              // rocket vector(attitude) init
+
+float vectorG[3] = {0.0f, 0.0f, -9.81f};
 float Z_unitvector[3] = { 0.0f, 0.0f, 1.0f };   // Z-axis vector
-float Rocket_Angle = 0.0f;    					// result of dot product Rocket Vector with Z-axis
+float magnitudeRocket = 0.0f;
+float magnitudeG = 0.0f;
+float cosTheta = 0.0f;
+float dotProduct = 0.0f;
+float Rocket_Angle_Z = 0.0f;    					// result of dot product Rocket Vector with Z-axis
 float a, b, c = 0.0f;                         	// just acos variables
+typedef struct
+{
+	float x;
+	float y;
+	float z;
+}vector;
 
 uint32_t startTick, endTick, elapsedTicks, costTime_us; //just check while loop time
 //-------------------------------- quaternion
@@ -85,6 +97,7 @@ float norm; 									// Acceleration
 float dq0, dq1, dq2, dq3; 						// variance quater
 float qDot0, qDot1, qDot2, qDot3;				// by acc
 float pDot0, pDot1, pDot2, pDot3;				// by gyro
+float lambda;
 
 /* USER CODE END PV */
 
@@ -101,6 +114,7 @@ static void MX_TIM3_Init(void);
 /* USER CODE BEGIN PFP */
 void SysTick_Init(void);               // systick  = like tic toc func in matlab
 void SysTick_Delay_us(uint32_t us);
+void setInitialQuaternion(float yaw, float pitch, float roll); //yaw_z, pitch_y, roll_x
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -139,7 +153,7 @@ char str[16]; // Enough to hold all numbers up to 32-bit int
 
 // mpu6050
 RawData_Def myAccelRaw, myGyroRaw;
-ScaledData_Def myAccelScaled, myGyroScaled;
+ScaledData_Def myAccelScaled, myGyroScaled, accAverage;
 /* USER CODE END 0 */
 
 /**
@@ -199,6 +213,9 @@ int main(void)
 	/* Open file to write/ create a file if it doesn't exist */
 	fresult = f_open(&fil, "file1.txt", FA_OPEN_ALWAYS | FA_READ | FA_WRITE);
 	/* Writing text */
+
+	float realAcc_x,realAcc_y,realAcc_z;
+	float desiredAngle = 30.0;
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -212,20 +229,36 @@ int main(void)
 		temp = readTrueTemp();
 		press = readTruePress(0);
 		altitude = readTrueAltitude(0); 		// altitude = initAltitude - readTrueAltitude(0); will come here after confirm.
-		// printf("%.2f\r\n", altitude);      	// test printf
 		// bmp180 part
 
 		// mpu6050 part
 		MPU6050_Get_Accel_Scale(&myAccelScaled);
 		MPU6050_Get_Gyro_Scale(&myGyroScaled);
-		//    printf("Accel: X=%.2f, Y=%.2f, Z=%.2f\n ", myAccelScaled.x, myAccelScaled.y, myAccelScaled.z);
-		//    HAL_Delay(50);
-		//    printf("Accelraw: X=%.2f, Y=%.2f, Z=%.2f\n ", myAccelRaw.x, myAccelRaw.y, myAccelRaw.z);
-		//    HAL_Delay(50);
-		//    printf("Gyro: X=%.2f, Y=%.2f, Z=%.2f\r\n", myGyroScaled.x, myGyroScaled.y, myGyroScaled.z);
-		//    HAL_Delay(50);
-		// mpu6050 part
 
+		// mpu6050 part
+		if(start==0&&myAccelScaled.z<=1.5f){
+			for(int count=0;count<3;count++){
+				accAverage.x=0,accAverage.y=0,accAverage.z=0;
+				accAverage.x=+myAccelScaled.x;
+				accAverage.y=+myAccelScaled.y;
+				accAverage.z=+myAccelScaled.z;
+			}
+			accAverage.x=accAverage.x/3.0f;
+			accAverage.y=accAverage.y/3.0f;
+			accAverage.z=accAverage.z/3.0f;		//moving mean filter
+			gyroAngleX = atan2f(accAverage.y,		// RAD pitch and roll by acc scope
+					sqrtf(accAverage.x * accAverage.x
+							+ accAverage.z * accAverage.z));
+			gyroAngleY = atan2f(-accAverage.x, 	//-myacc.x to myacc.x
+					sqrtf(accAverage.y * accAverage.y
+							+ accAverage.z * accAverage.z));
+
+			setInitialQuaternion(0.0f, gyroAngleY,gyroAngleX);
+
+			continue;		//start trigger
+		}
+		else
+			start=1;
 		/*                        this code will be run after remove gravity element from accelerate scope and add time out start point here
 		 if (start == 0 || myAccelScaled.z >= 15.0)
 		 {
@@ -239,10 +272,13 @@ int main(void)
 		// accerlation variance minimum setting	가속도가 충분히 큰 경우에만 사용한
 		if (norm > 0.1f) {
 		    // 가속도를 단위 벡터로 정규화한다
-		    norm = 1.0f / norm;
-		    myAccelScaled.x *= norm;
-		    myAccelScaled.y *= norm;
-		    myAccelScaled.z *= norm;
+			norm = 1.0f / norm;
+			accAverage.x = myAccelScaled.x;
+			accAverage.y = myAccelScaled.y;
+			accAverage.z = myAccelScaled.z;
+		    accAverage.x *= norm;
+		    accAverage.y *= norm;
+		    accAverage.z *= norm;
 
 		    // calculate rotation matrix from present quaternion 현재의 쿼터니온으로부터 회전행렬의 일부를 계산한다
 		    float _2q0 = 2.0f * q0;
@@ -260,10 +296,10 @@ int main(void)
 		    float q3q3 = q3 * q3;
 
 		    // calculate variance of quaternion by accerlate scope (gradiant descent algorithm) 가속도에 의한 쿼터니온의 변화량을 계산한다 (그라디언트 디센트 알고리즘)
-		    qDot0 = _4q0 * q2q2 + _2q2 * myAccelScaled.x + _4q0 * q1q1 - _2q1 * myAccelScaled.y;
-		    qDot1 = _4q1 * q3q3 - _2q3 * myAccelScaled.x + 4.0f * q0q0 * q1 - _2q0 * myAccelScaled.y - _4q1 + _8q1 * q1q1 + _8q1 * q2q2 + _4q1 * myAccelScaled.z;
-		    qDot2 = 4.0f * q0q0 * q2 + _2q0 * myAccelScaled.x + _4q2 * q3q3 - _2q3 * myAccelScaled.y - _4q2 + _8q2 * q1q1 + _8q2 * q2q2 + _4q2 * myAccelScaled.z;
-		    qDot3 = 4.0f * q1q1 * q3 - _2q1 * myAccelScaled.x + 4.0f * q2q2 * q3 - _2q2 * myAccelScaled.y;
+		    qDot0 = _4q0 * q2q2 + _2q2 * accAverage.x + _4q0 * q1q1 - _2q1 * accAverage.y;
+		    qDot1 = _4q1 * q3q3 - _2q3 * accAverage.x + 4.0f * q0q0 * q1 - _2q0 * accAverage.y - _4q1 + _8q1 * q1q1 + _8q1 * q2q2 + _4q1 * accAverage.z;
+		    qDot2 = 4.0f * q0q0 * q2 + _2q0 * accAverage.x + _4q2 * q3q3 - _2q3 * accAverage.y - _4q2 + _8q2 * q1q1 + _8q2 * q2q2 + _4q2 * accAverage.z;
+		    qDot3 = 4.0f * q1q1 * q3 - _2q1 * accAverage.x + 4.0f * q2q2 * q3 - _2q2 * accAverage.y;
 
 		    // calc size of gradiant 그라디언트의 크기를 계산한다
 		    norm = sqrt(qDot0 * qDot0 + qDot1 * qDot1 + qDot2 * qDot2 + qDot3 * qDot3);
@@ -305,9 +341,17 @@ int main(void)
 		// quaternion to rocket vector 쿼터니온을 방향벡터로 변환한다
 		Rocket_vector[0] = 2.0f*(q1*q3 - q0*q2); // x축
 		Rocket_vector[1] = 2.0f*(q0*q1 + q2*q3); // y축
-		Rocket_vector[2] = q0*q0 - q1*q1 - q2*q2 + q3*q3; // z축
+		Rocket_vector[2] = 1.0 - 2.0 * (q1 * q1 + q2 * q2); // z component
+//		printf("%f, %f, %f\r\n",Rocket_vector[0],Rocket_vector[1],Rocket_vector[2]);
+		// elimination gravity by minJun (Fail)
+		dotProduct = Rocket_vector[0]*vectorG[0]+Rocket_vector[1]*vectorG[1]+Rocket_vector[2]*vectorG[2];
+		magnitudeRocket = sqrt(Rocket_vector[0]*Rocket_vector[0] + Rocket_vector[1]*Rocket_vector[1] + Rocket_vector[2]*Rocket_vector[2]);
+		magnitudeG = sqrt(vectorG[0]*vectorG[0] + vectorG[1]*vectorG[1] + vectorG[2]*vectorG[2]);
+		cosTheta = dotProduct / (magnitudeRocket * magnitudeG);
+		realAcc_x = myAccelScaled.x - 9.81*Rocket_vector[0]*cosTheta;
+		realAcc_y = myAccelScaled.y - 9.81*Rocket_vector[1]*cosTheta;
+		realAcc_z = myAccelScaled.z - 9.81*Rocket_vector[2]*cosTheta;
 
-		// innerproduct Z axis with rocket vector 로켓의 방향벡터와 Z축 단위벡터와의 내적을 계산한다
 		a = Rocket_vector[0] * Z_unitvector[0]
 						+ Rocket_vector[1] * Z_unitvector[1]
 						+ Rocket_vector[2] * Z_unitvector[2];
@@ -317,10 +361,34 @@ int main(void)
 		c = sqrt(Z_unitvector[0] * Z_unitvector[0]
 								+ Z_unitvector[1] * Z_unitvector[1]
 								+ Z_unitvector[2] * Z_unitvector[2]);
-
 		// calc Rocket attitude (RAD) 로켓의 기울기 정도를 계산한다 (라디안)
-		Rocket_Angle = acos(a / (b * c));
-		printf("RocketAngle : %.2f\r\n", Rocket_Angle*RAD_TO_DEG); 						// test code not pass
+		Rocket_Angle_Z = (float)acos(a / (b * c));
+
+//		printf("RocketAngle : %.2f, Acc: %.2f %.2f %.2f \r\n",Rocket_Angle_Z*RAD_TO_DEG,realAcc_x,realAcc_y,realAcc_z);					// test code not pass
+
+		//calculate acc comp by gravity
+		if (myGyroScaled.z*dt > (M_PI / 4)) {
+			//calc with sine    /use rho and thea
+			lambda = (float)atan(tan((double)myGyroScaled.x*dt) / sin((double)myGyroScaled.z*dt));
+		}
+		else {
+			//calc with cosine  /use pi and thea
+			lambda = (float)atan(tan((double)myGyroScaled.y*dt) / cos((double)myGyroScaled.z*dt));
+		}
+
+		//with lambda, we should calculate gravity comp of each axis.
+		//gravity = 9.81m/s^2
+		float gravity_x = 9.81 * sin((double)lambda) * cos((double)myGyroScaled.z*dt);
+		float gravity_y = 9.81* sin((double)lambda) * sin((double)myGyroScaled.z*dt);
+		float gravity_z = 9.81* cos((double)lambda);
+
+
+		//store acc to matrix
+		float accx = myAccelScaled.x - gravity_x;
+		float accy = myAccelScaled.y - gravity_y;
+		float accz = myAccelScaled.z - gravity_z;
+		printf("RocketAngle : %.2f, Acc: %.2f %.2f %.2f \r\n",Rocket_Angle_Z*RAD_TO_DEG,accx,accy,accz);					// test code not pass
+		HAL_Delay(50);
 //		float accZ_rot = -accZ_raw * sin(compAngleY) + accY_raw * cos(compAngleY);
 //		printf("pure Z acc : %.2f\r\n", accZ_rot); 						// test code not pass
 
@@ -333,11 +401,11 @@ int main(void)
 		// deploy parachute part
 		if (Parachute == 0)                           					// == 1 ( 0 is just test )
 		{
-			/*if (altitude >= 380) {
+			if (altitude >= 380) {
 				Parachute = 0;
 				printf("deploy parachute: altitude\r\n");
 			}
-			if (Rocket_Angle >= desiredAngle) {
+			else if (Rocket_Angle_Z*RAD_TO_DEG > desiredAngle ) {
 				Parachute = 0;
 				printf("deploy parachute: Desired Angle\r\n");
 			}
@@ -346,11 +414,11 @@ int main(void)
 			//   Parachute = 0;
 			//   printf("deploy parachute : Z velocity");
 			// }
-			if (elapsed_time_ms >= 5000) // 10 s
-					{
+			else if (second >= 4) // 10 s
+			{
 				Parachute = 0;
 				printf("deploy parachute : time out\r\n");
-			}*/
+			}
 		}
 
 		// sdcard part
@@ -777,6 +845,19 @@ void SysTick_Delay_us(uint32_t us)            // tic toc function
 	SysTick->VAL = 0;
 	while (!(SysTick->CTRL & SysTick_CTRL_COUNTFLAG_Msk))
 		;
+}
+void setInitialQuaternion(float yaw, float pitch, float roll) { //yaw_z, pitch_y, roll_x
+    float cy = cos(yaw * 0.5);
+    float sy = sin(yaw * 0.5);
+    float cp = cos(pitch * 0.5);
+    float sp = sin(pitch * 0.5);
+    float cr = cos(roll * 0.5);
+    float sr = sin(roll * 0.5);
+
+    q0 = cy * cp * cr + sy * sp * sr; // q0
+    q1 = cy * cp * sr - sy * sp * cr; // q1
+    q2 = sy * cp * sr + cy * sp * cr; // q2
+    q3 = sy * cp * cr - cy * sp * sr; // q3
 }
 /* USER CODE END 4 */
 
